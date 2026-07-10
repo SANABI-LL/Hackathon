@@ -1,0 +1,8 @@
+-- Deadline Copilot — CockroachDB schema
+-- ⚠️ 由 Codex 按 .ai/TASK.md 填充为可运行定稿。
+-- 关键修正（不要照抄二手资料，对 CockroachDB v25.x 官方文档核对）：
+--   1. 建向量索引前： SET CLUSTER SETTING feature.vector_index.enabled = true;
+--   2. memory_chunks.embedding VECTOR(1024)，索引用 cosine：
+--        CREATE VECTOR INDEX ON memory_chunks (embedding vector_cosine_ops);
+--   3. deadlines 加 UNIQUE (user_id, title, due_date) 防重复 ingest。
+--   4. 删掉 messages.embedding（demo 不做对话向量检索）。

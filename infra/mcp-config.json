@@ -1,0 +1,3 @@
+{
+  "_comment": "CockroachDB Cloud Managed MCP Server 配置占位。从 https://cockroachlabs.cloud/mcp 云控制台拿配置片段填入。只读 + 审计日志。"
+}
