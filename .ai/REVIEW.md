@@ -38,6 +38,14 @@
 - 真库验证：CockroachDB v25.4.10，SSL verify-full 直连 OK，`SET CLUSTER SETTING` 有权限，6 表 + 向量索引建成。
 - 遗留（非阻塞，后续可选）：⑤.5 Titan 重试退避、⑤.6 max_tokens=1200、去重路径下 S3 仍会先传产生孤儿对象。
 
+## Live 端到端验证 (2026-07-10 全绿) ✅
+四大件全部真环境打通：CockroachDB v25.4.10 · Amazon S3 · Bedrock Titan V2(1024) · Bedrock Claude Sonnet 4.5。
+- `POST /api/ingest`（一封模拟 IRCC 邮件）→ 返回 documentId + **4 条 deadline**（含 Claude 推理出的「续签 = 到期前 30 天」计算日期）。
+- 库内核对：memory_documents 1 · memory_chunks 1(embedding=1024) · deadlines 4 · agent_events ingest(deduped:false) · S3 对象 1。
+- 向量检索冒烟：cosine 自身相似度 1.000。
+- 模型说明：Sonnet 5 / Fable 5 该账号 `not available`（走 Marketplace/需 sales），改用 `us.anthropic.claude-sonnet-4-5-20250929-v1:0`（代码模型无关，换 env 即可切）。
+- Claude 输出带 ```json 围栏，`parseJsonArray` 的正则回退已正确处理。
+
 ## 建议下一步顺序
 1. Codex 先修 ①③ 的 #1（去重）+ #2（大小上限）+ ④ 的 #4（纯函数单测）——这些不需要 infra，现在就能做。
 2. 你并行去开 CockroachDB 集群 + 申请/确认 Bedrock 权限 + 建 S3 桶，填 `.env.local`。
