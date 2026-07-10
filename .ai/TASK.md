@@ -9,6 +9,17 @@
 - Bedrock：Claude 抽取（BEDROCK_CLAUDE_MODEL_ID），Titan V2 embedding（amazon.titan-embed-text-v2:0，1024 维）。
 - 架构已定：ingest 同步跑在 API route（部署 AWS Amplify，超时够）；Lambda 只做定时 agent，本任务不碰。
 - 前置：web/ 需先用 `create-next-app` 建好（见 README/根目录说明）。
+- **有参考原型**：作者旧项目 Échéo 已跑通同类逻辑，见下方「参考实现」——照着改写成 CRDB+Bedrock 版，别从零发明，也别整包照抄。
+
+## 参考实现（echeo2，路径 `~/Downloads/ep19-finalproject/echeo2`，仅参考不照抄）
+| 要写的 | 参考文件 | 借鉴什么 / 注意 |
+|---|---|---|
+| `extractDeadlines` prompt | `src/lib/ai/extract.ts` | 抽取 prompt 结构 + ISO 日期校验。**原文是法语，改写成英文**。 |
+| `chunkText` | `src/lib/ai/chunk.ts` | 切块参数/策略 |
+| `embed` | `src/lib/ai/embed.ts` | 封装模式；但它是 OpenAI 兼容 1536 维 → **改成 Bedrock Titan V2，1024 维** |
+| Claude 客户端 | `src/lib/ai/client.ts` | 调用/JSON 解析套路 → **从 @anthropic-ai/sdk 改成 @aws-sdk/client-bedrock-runtime** |
+| 向量检索 SQL | `supabase/migrations/0004_match_rpc.sql` | cosine `<=>` 检索语义**可原样借**；但**去掉 Supabase RPC/RLS 包装**，写成 CRDB 普通参数化 SQL |
+| 表结构 | `supabase/schema.sql` | 字段命名参考，但按本 TASK 的 6 表 + CRDB 向量语法为准 |
 
 ## Requirements
 1. `infra/schema.sql`（可直接在 CRDB 跑通）：
@@ -21,7 +32,7 @@
    - `CREATE INDEX ON deadlines (user_id, due_date);`
 2. `web/lib/db.ts`：pg Pool 连 DATABASE_URL，导出 query 帮手，连接池复用（别每请求新建）。
 3. `web/lib/bedrock.ts`：
-   - `extractDeadlines(text): Promise<{title,due_date,description,confidence}[]>` — 调 Claude，结构化 JSON 输出，prompt 要求只返回 JSON 数组、日期 ISO `YYYY-MM-DD`、给 confidence(0-1)、抽不到返回 `[]`。
+   - `extractDeadlines(text): Promise<{title,due_date,description,confidence}[]>` — 调 Claude，结构化 JSON 输出，prompt 要求只返回 JSON 数组、日期 ISO `YYYY-MM-DD`、给 confidence(0-1)、抽不到返回 `[]`。**prompt 用英文**（参考 echeo2 `extract.ts` 结构，把法语改写成英文；本项目所有 prompt 和用户可见文案一律英文）。
    - `embed(text): Promise<number[]>` — 调 Titan V2，返回 1024 维。
 4. `web/lib/memory.ts`：
    - `chunkText(text)` — 按段落切块（~500 字符/块）。
@@ -34,6 +45,8 @@
 - 不要引入 ORM（Prisma 等），就用 pg + 原生 SQL。
 - 不要为多用户/团队做任何抽象，单用户到底。
 - schema 向量语法必须对着 CockroachDB v25.x 官方文档，不照抄二手资料。
+- 参考 echeo2 只借鉴逻辑/prompt/SQL 思路，**不整包 copy-paste**（比赛"新项目"规则）；README 里如实披露"基于作者 Échéo 经验重建"。
+- **语言：所有 LLM prompt、代码注释里的用户可见文案、返回给前端的文字，一律英文**（echeo2 的法语部分全部改英文）。
 
 ## Implementation Plan
 1. 写 infra/schema.sql（含上面所有修正），本地/CRDB 跑一遍确认无语法错。
