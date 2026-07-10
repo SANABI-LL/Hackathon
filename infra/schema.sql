@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS memory_documents (
   s3_key STRING,
   text_hash STRING NOT NULL,
   text_preview STRING,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, text_hash)
 );
 
 CREATE TABLE IF NOT EXISTS memory_chunks (

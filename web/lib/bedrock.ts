@@ -29,7 +29,7 @@ function decodeJsonBody<T>(body: Uint8Array): T {
   return JSON.parse(new TextDecoder().decode(body)) as T;
 }
 
-function parseJsonArray(text: string): unknown {
+export function parseJsonArray(text: string): unknown {
   const trimmed = text.trim();
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
     return JSON.parse(trimmed);
@@ -43,7 +43,7 @@ function parseJsonArray(text: string): unknown {
   return JSON.parse(match[0]);
 }
 
-function normalizeDeadline(value: unknown): ExtractedDeadline | null {
+export function normalizeDeadline(value: unknown): ExtractedDeadline | null {
   if (!value || typeof value !== "object") return null;
 
   const item = value as Record<string, unknown>;

@@ -31,6 +31,13 @@
 - **DB SSL**：`sslmode=verify-full` 走 pg 连 CRDB Cloud，确认无需显式传 CA 就能连上；连不上时给 `ssl` 显式配置。
 - **pdf-parse v2 API**：`new PDFParse({data}).getText()` 已过 tsc，真 PDF 跑一次确认抽出非空文本。
 
+## 复核 (Fix round 1 已修，Claude 复核通过)
+- ③.1 去重 ✅ 已修：`text_hash` 预查 + 命中跳过 embedding，未命中 `ON CONFLICT DO NOTHING`+`inserted` 标志，竞态也不会写重复 chunk。schema 加了 `UNIQUE(user_id,text_hash)`。
+- ③.2 大小上限 ✅ 已修：10MB，Content-Length 早查 + file.size + buffer 兜底 + JSON body，均映射 413 `FILE_TOO_LARGE`。
+- ④.4 单测 ✅ 已修：vitest 2 文件 14 用例全绿，覆盖 chunkText/normalizeDeadline/parseJsonArray 边界。
+- 真库验证：CockroachDB v25.4.10，SSL verify-full 直连 OK，`SET CLUSTER SETTING` 有权限，6 表 + 向量索引建成。
+- 遗留（非阻塞，后续可选）：⑤.5 Titan 重试退避、⑤.6 max_tokens=1200、去重路径下 S3 仍会先传产生孤儿对象。
+
 ## 建议下一步顺序
 1. Codex 先修 ①③ 的 #1（去重）+ #2（大小上限）+ ④ 的 #4（纯函数单测）——这些不需要 infra，现在就能做。
 2. 你并行去开 CockroachDB 集群 + 申请/确认 Bedrock 权限 + 建 S3 桶，填 `.env.local`。

@@ -8,8 +8,16 @@ import { writeMemory } from "@/lib/memory";
 export const maxDuration = 60;
 export const runtime = "nodejs";
 
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
 interface IngestPayload {
   text?: unknown;
+}
+
+class FileTooLargeError extends Error {
+  constructor() {
+    super(`Upload size must be ${MAX_UPLOAD_BYTES / 1024 / 1024} MB or less.`);
+  }
 }
 
 let s3Client: S3Client | null = null;
@@ -26,6 +34,12 @@ function getS3Client(): S3Client {
 
 function jsonError(message: string, status: number, code: string): NextResponse {
   return NextResponse.json({ error: { code, message } }, { status });
+}
+
+function assertUploadSize(size: number): void {
+  if (size > MAX_UPLOAD_BYTES) {
+    throw new FileTooLargeError();
+  }
 }
 
 async function extractPdfText(buffer: Buffer): Promise<string> {
@@ -54,8 +68,10 @@ async function readRequest(request: Request): Promise<{
     const textField = formData.get("text");
 
     if (file instanceof File) {
+      assertUploadSize(file.size);
       const arrayBuffer = await file.arrayBuffer();
       const body = Buffer.from(arrayBuffer);
+      assertUploadSize(body.length);
       const mimeType = file.type || "application/octet-stream";
       const isPdf =
         mimeType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
@@ -72,8 +88,10 @@ async function readRequest(request: Request): Promise<{
 
     if (typeof textField === "string" && textField.trim()) {
       const text = textField.trim();
+      const body = Buffer.from(text, "utf8");
+      assertUploadSize(body.length);
       return {
-        body: Buffer.from(text, "utf8"),
+        body,
         text,
         sourceType: "text",
         fileName: "pasted-text.txt",
@@ -83,11 +101,15 @@ async function readRequest(request: Request): Promise<{
   }
 
   if (contentType.includes("application/json")) {
-    const payload = (await request.json()) as IngestPayload;
+    const rawBody = await request.text();
+    assertUploadSize(Buffer.byteLength(rawBody, "utf8"));
+    const payload = JSON.parse(rawBody) as IngestPayload;
     if (typeof payload.text === "string" && payload.text.trim()) {
       const text = payload.text.trim();
+      const body = Buffer.from(text, "utf8");
+      assertUploadSize(body.length);
       return {
-        body: Buffer.from(text, "utf8"),
+        body,
         text,
         sourceType: "text",
         fileName: "pasted-text.txt",
@@ -130,11 +152,26 @@ async function uploadToS3(input: {
 
 export async function POST(request: Request): Promise<NextResponse> {
   const userId = process.env.APP_USER_ID || "00000000-0000-0000-0000-000000000001";
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const size = Number(contentLength);
+    if (Number.isFinite(size) && size > MAX_UPLOAD_BYTES) {
+      return jsonError(
+        `Upload size must be ${MAX_UPLOAD_BYTES / 1024 / 1024} MB or less.`,
+        413,
+        "FILE_TOO_LARGE"
+      );
+    }
+  }
 
   let parsedRequest: Awaited<ReturnType<typeof readRequest>>;
   try {
     parsedRequest = await readRequest(request);
   } catch (error) {
+    if (error instanceof FileTooLargeError) {
+      return jsonError(error.message, 413, "FILE_TOO_LARGE");
+    }
+
     return jsonError(
       error instanceof Error ? error.message : "Unable to read the ingest request.",
       400,

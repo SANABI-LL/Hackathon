@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { createHash } from "crypto";
 import { embed, toVectorLiteral, type ExtractedDeadline } from "./bedrock";
-import { withTransaction } from "./db";
+import { query, withTransaction } from "./db";
 
 export interface WriteMemoryInput {
   userId: string;
@@ -22,6 +22,11 @@ export interface WriteMemoryResult {
 interface EmbeddedChunk {
   content: string;
   embedding: number[];
+}
+
+interface DocumentInsertResult {
+  documentId: string;
+  inserted: boolean;
 }
 
 export function chunkText(text: string, target = 500, overlap = 80): string[] {
@@ -87,9 +92,9 @@ async function mapWithConcurrency<T, R>(
 
 async function insertDocument(
   client: PoolClient,
-  input: WriteMemoryInput
-): Promise<string> {
-  const textHash = createHash("sha256").update(input.text).digest("hex");
+  input: WriteMemoryInput,
+  textHash: string
+): Promise<DocumentInsertResult> {
   const result = await client.query<{ id: string }>(
     `INSERT INTO memory_documents (
       user_id,
@@ -102,6 +107,7 @@ async function insertDocument(
       text_preview
     )
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    ON CONFLICT (user_id, text_hash) DO NOTHING
     RETURNING id`,
     [
       input.userId,
@@ -115,10 +121,134 @@ async function insertDocument(
     ]
   );
 
-  return result.rows[0].id;
+  if (result.rows[0]) {
+    return { documentId: result.rows[0].id, inserted: true };
+  }
+
+  const existing = await client.query<{ id: string }>(
+    `SELECT id
+     FROM memory_documents
+     WHERE user_id = $1 AND text_hash = $2
+     LIMIT 1`,
+    [input.userId, textHash]
+  );
+
+  if (!existing.rows[0]) {
+    throw new Error("Unable to find existing memory document after deduplication conflict.");
+  }
+
+  return { documentId: existing.rows[0].id, inserted: false };
+}
+
+async function findExistingDocument(
+  userId: string,
+  textHash: string
+): Promise<string | null> {
+  const result = await query<{ id: string }>(
+    `SELECT id
+     FROM memory_documents
+     WHERE user_id = $1 AND text_hash = $2
+     LIMIT 1`,
+    [userId, textHash]
+  );
+
+  return result.rows[0]?.id ?? null;
+}
+
+async function upsertDeadlines(
+  client: PoolClient,
+  input: WriteMemoryInput,
+  documentId: string
+): Promise<ExtractedDeadline[]> {
+  const insertedDeadlines: ExtractedDeadline[] = [];
+  for (const deadline of input.deadlines) {
+    const result = await client.query<ExtractedDeadline>(
+      `INSERT INTO deadlines (
+        user_id,
+        document_id,
+        title,
+        due_date,
+        description,
+        confidence
+      )
+      VALUES ($1, $2, $3, $4::DATE, $5, $6)
+      ON CONFLICT (user_id, title, due_date)
+      DO UPDATE SET
+        document_id = EXCLUDED.document_id,
+        description = COALESCE(EXCLUDED.description, deadlines.description),
+        confidence = GREATEST(deadlines.confidence, EXCLUDED.confidence),
+        updated_at = now()
+      RETURNING title, due_date::STRING AS due_date, description, confidence`,
+      [
+        input.userId,
+        documentId,
+        deadline.title,
+        deadline.due_date,
+        deadline.description,
+        deadline.confidence,
+      ]
+    );
+
+    insertedDeadlines.push(result.rows[0]);
+  }
+
+  return insertedDeadlines;
+}
+
+async function insertIngestEvent(
+  client: PoolClient,
+  input: WriteMemoryInput,
+  documentId: string,
+  payload: {
+    chunkCount: number;
+    deadlineCount: number;
+    deduped: boolean;
+  }
+): Promise<void> {
+  await client.query(
+    `INSERT INTO agent_events (user_id, document_id, event_type, payload)
+     VALUES ($1, $2, 'ingest', $3::JSONB)`,
+    [
+      input.userId,
+      documentId,
+      JSON.stringify({
+        sourceType: input.sourceType,
+        fileName: input.fileName,
+        chunkCount: payload.chunkCount,
+        deadlineCount: payload.deadlineCount,
+        deduped: payload.deduped,
+      }),
+    ]
+  );
 }
 
 export async function writeMemory(input: WriteMemoryInput): Promise<WriteMemoryResult> {
+  const textHash = createHash("sha256").update(input.text).digest("hex");
+  const existingDocumentId = await findExistingDocument(input.userId, textHash);
+
+  if (existingDocumentId) {
+    return withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO users (id, display_name)
+         VALUES ($1, $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [input.userId, "Demo User"]
+      );
+
+      const insertedDeadlines = await upsertDeadlines(client, input, existingDocumentId);
+      await insertIngestEvent(client, input, existingDocumentId, {
+        chunkCount: 0,
+        deadlineCount: insertedDeadlines.length,
+        deduped: true,
+      });
+
+      return {
+        documentId: existingDocumentId,
+        deadlines: insertedDeadlines,
+      };
+    });
+  }
+
   const chunks = chunkText(input.text);
   if (chunks.length === 0) {
     throw new Error("No text chunks were available to store.");
@@ -141,69 +271,31 @@ export async function writeMemory(input: WriteMemoryInput): Promise<WriteMemoryR
       [input.userId, "Demo User"]
     );
 
-    const documentId = await insertDocument(client, input);
+    const { documentId, inserted } = await insertDocument(client, input, textHash);
 
-    for (let index = 0; index < embeddedChunks.length; index += 1) {
-      const chunk = embeddedChunks[index];
-      await client.query(
-        `INSERT INTO memory_chunks (
-          document_id,
-          user_id,
-          chunk_index,
-          content,
-          embedding
-        )
-        VALUES ($1, $2, $3, $4, $5::VECTOR(1024))`,
-        [documentId, input.userId, index, chunk.content, toVectorLiteral(chunk.embedding)]
-      );
+    if (inserted) {
+      for (let index = 0; index < embeddedChunks.length; index += 1) {
+        const chunk = embeddedChunks[index];
+        await client.query(
+          `INSERT INTO memory_chunks (
+            document_id,
+            user_id,
+            chunk_index,
+            content,
+            embedding
+          )
+          VALUES ($1, $2, $3, $4, $5::VECTOR(1024))`,
+          [documentId, input.userId, index, chunk.content, toVectorLiteral(chunk.embedding)]
+        );
+      }
     }
 
-    const insertedDeadlines: ExtractedDeadline[] = [];
-    for (const deadline of input.deadlines) {
-      const result = await client.query<ExtractedDeadline>(
-        `INSERT INTO deadlines (
-          user_id,
-          document_id,
-          title,
-          due_date,
-          description,
-          confidence
-        )
-        VALUES ($1, $2, $3, $4::DATE, $5, $6)
-        ON CONFLICT (user_id, title, due_date)
-        DO UPDATE SET
-          document_id = EXCLUDED.document_id,
-          description = COALESCE(EXCLUDED.description, deadlines.description),
-          confidence = GREATEST(deadlines.confidence, EXCLUDED.confidence),
-          updated_at = now()
-        RETURNING title, due_date::STRING AS due_date, description, confidence`,
-        [
-          input.userId,
-          documentId,
-          deadline.title,
-          deadline.due_date,
-          deadline.description,
-          deadline.confidence,
-        ]
-      );
-
-      insertedDeadlines.push(result.rows[0]);
-    }
-
-    await client.query(
-      `INSERT INTO agent_events (user_id, document_id, event_type, payload)
-       VALUES ($1, $2, 'ingest', $3::JSONB)`,
-      [
-        input.userId,
-        documentId,
-        JSON.stringify({
-          sourceType: input.sourceType,
-          fileName: input.fileName,
-          chunkCount: embeddedChunks.length,
-          deadlineCount: insertedDeadlines.length,
-        }),
-      ]
-    );
+    const insertedDeadlines = await upsertDeadlines(client, input, documentId);
+    await insertIngestEvent(client, input, documentId, {
+      chunkCount: inserted ? embeddedChunks.length : 0,
+      deadlineCount: insertedDeadlines.length,
+      deduped: !inserted,
+    });
 
     return {
       documentId,

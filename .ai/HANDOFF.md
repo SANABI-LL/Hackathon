@@ -41,3 +41,20 @@
 - Transaction boundaries cover CockroachDB writes only: `users` upsert, `memory_documents`, `memory_chunks`, `deadlines`, and `agent_events` are all inside one transaction. S3 upload, Claude extraction, and Titan embeddings happen before the DB transaction, so failed DB writes can leave an uploaded S3 object with no DB row.
 - Deadline de-duplication uses `ON CONFLICT (user_id, title, due_date) DO UPDATE` so repeated ingest updates source metadata/confidence instead of inserting another deadline.
 - Vector values are passed as pg parameters and cast with `$5::VECTOR(1024)`. This is statically type-safe from the app side, but the exact CockroachDB parameter cast behavior should be confirmed live.
+
+## Fix round 1 (review items)
+
+- Fix #1 document/chunk de-duplication: `memory_documents` now has `UNIQUE (user_id, text_hash)`. `writeMemory()` computes the SHA-256 text hash before Titan embedding, checks for an existing `(user_id, text_hash)` document, and reuses its `documentId` when present. Duplicate ingests skip chunk embedding and `memory_chunks` inserts, still upsert deadlines, and still write an `agent_events('ingest')` row with `deduped: true`. The insert path also uses `ON CONFLICT (user_id, text_hash) DO NOTHING` so a concurrent duplicate insert reuses the existing document instead of creating duplicate chunks.
+- Fix #2 upload size limit: `/api/ingest` now enforces a named 10 MB `MAX_UPLOAD_BYTES` limit. It rejects oversized requests from `Content-Length` before body parsing where possible and also checks multipart files, buffered text fields, and JSON bodies after buffering as a fallback. Oversized input returns HTTP 413 with `{ error: { code: "FILE_TOO_LARGE", message } }`.
+- Fix #4 pure-function tests: added `npm run test` as `vitest run`, exported `normalizeDeadline` and `parseJsonArray`, and added Vitest coverage for `chunkText`, `normalizeDeadline`, and `parseJsonArray` under `web/lib/__tests__/`. These tests do not call network, DB, S3, or Bedrock.
+
+Verification:
+
+- `cd web && npx tsc --noEmit`: passed, 0 TypeScript errors.
+- `cd web && npm run lint`: passed, 0 ESLint errors.
+- `cd web && npm run test`: passed, 2 test files and 14 tests.
+
+Decisions/risks:
+
+- The duplicate pre-check is intentionally outside the write transaction to avoid Titan calls for already-ingested text; all DB writes remain inside a single transaction.
+- A true concurrent duplicate can still do redundant Titan work if both requests pass the pre-check before either inserts, but the unique constraint and conflict handling prevent duplicate documents/chunks from being written.
