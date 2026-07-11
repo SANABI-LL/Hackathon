@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { createHash } from "crypto";
 import { embed, toVectorLiteral, type ExtractedDeadline } from "./bedrock";
+import { SYSTEM_USER_ID } from "./constants";
 import { query, withTransaction } from "./db";
 
 export interface WriteMemoryInput {
@@ -22,6 +23,9 @@ export interface WriteMemoryResult {
 export interface SearchChunkResult {
   content: string;
   similarity: number;
+  source: "user_memory" | "policy";
+  source_key: string | null;
+  source_title: string | null;
 }
 
 export interface DeadlineRow {
@@ -121,13 +125,21 @@ export async function searchChunks(
   const limit = Math.max(1, Math.min(20, Math.trunc(k)));
   const result = await query<SearchChunkResult>(
     `SELECT
-       content,
-       1 - (embedding <=> $1::VECTOR(1024)) AS similarity
+       memory_chunks.content,
+       1 - (memory_chunks.embedding <=> $1::VECTOR(1024)) AS similarity,
+       CASE
+         WHEN memory_chunks.user_id = $3 THEN 'policy'
+         ELSE 'user_memory'
+       END AS source,
+       memory_documents.source_key,
+       memory_documents.file_name AS source_title
      FROM memory_chunks
-     WHERE user_id = $2
-     ORDER BY embedding <=> $1::VECTOR(1024)
-     LIMIT $3`,
-    [toVectorLiteral(queryEmbedding), userId, limit]
+     JOIN memory_documents
+       ON memory_documents.id = memory_chunks.document_id
+     WHERE memory_chunks.user_id IN ($2, $3)
+     ORDER BY memory_chunks.embedding <=> $1::VECTOR(1024)
+     LIMIT $4`,
+    [toVectorLiteral(queryEmbedding), userId, SYSTEM_USER_ID, limit]
   );
 
   return result.rows;

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS memory_documents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
   source_type STRING NOT NULL,
+  source_key STRING,
   file_name STRING,
   mime_type STRING,
   s3_bucket STRING,
@@ -65,6 +66,10 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS memory_documents_user_created_idx
   ON memory_documents (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS memory_documents_user_source_key_idx
+  ON memory_documents (user_id, source_key)
+  WHERE source_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS memory_chunks_user_document_idx
   ON memory_chunks (user_id, document_id, chunk_index);

@@ -141,3 +141,50 @@ Pending live verification:
 - Confirm the configured Sonnet 4.5 Bedrock model accepts Anthropic PDF `document` blocks via `InvokeModel`; if not, keep the structured failure and consider an OCR/PDF raster fallback.
 - Run the Lambda against a real DB or local mock data; confirm one remind event is created per due deadline per day and repeat runs do not duplicate same-day reminders.
 - Run `cd web && npm run seed` with live env; confirm sample documents/deadlines are created and a second run does not duplicate chunks or documents.
+
+## Round 4 (KB refresh)
+
+Files changed:
+
+- `infra/schema.sql`
+- `infra/kb-sources.json`
+- `web/lib/constants.ts`
+- `web/lib/kb.ts`
+- `web/lib/memory.ts`
+- `web/app/api/chat/route.ts`
+- `web/lib/__tests__/kb.test.ts`
+- `scripts/refresh-kb.ts`
+- `web/package.json`
+- `agent/kb-handler.ts`
+- `agent/package.json`
+- `agent/package-lock.json`
+- `agent/README.md`
+- `.ai/HANDOFF.md`
+
+Static verification:
+
+- `cd web && npx tsc --noEmit`: passed, 0 TypeScript errors.
+- `cd web && npm run lint`: passed, 0 ESLint errors.
+- `cd web && npm run test`: passed, 3 test files and 21 tests.
+
+HTML-extraction approach:
+
+- `web/lib/kb.ts` fetches official URLs with a `User-Agent`, `Accept` header, and `AbortController` timeout.
+- HTML is converted to plain text with deterministic stripping only: removes `script`, `style`, `noscript`, `svg`, `nav`, `header`, `footer`, `aside`, and comments; converts common block endings and `<br>` to line breaks; removes remaining tags; decodes common/numeric HTML entities; normalizes whitespace.
+- No LLM is used for policy cleaning or rewriting, so stored policy chunks remain source-faithful to fetched page text.
+- Added pure tests for script/style/nav/footer removal, entity decoding, and whitespace normalization.
+
+Search behavior:
+
+- `SYSTEM_USER_ID` is fixed as `00000000-0000-0000-0000-0000000000ff` in `web/lib/constants.ts` and mirrored in the self-contained Lambda.
+- `searchChunks(userId, ...)` now joins `memory_documents` and retrieves `memory_chunks.user_id IN ($user, $system)`.
+- Each result includes `source: 'user_memory' | 'policy'`, nullable `source_key`, and nullable `source_title`; `/api/chat` includes that source label in the context block sent to Claude.
+
+Pending live items:
+
+- Apply the live DB migration with `ALTER TABLE memory_documents ADD COLUMN IF NOT EXISTS source_key STRING;` and add the optional `(user_id, source_key)` index if desired.
+- Run `cd web && npm run refresh-kb` with live `DATABASE_URL` and Bedrock access; confirm first run updates/embeds all reachable official sources and second run skips unchanged hashes.
+- Confirm changed-source replacement deletes the prior `SYSTEM_USER_ID + source_key` document and its chunks through cascade before inserting the new document and chunks.
+- Package/deploy `agent/kb-handler.ts` as a separate Lambda with `infra/kb-sources.json` included or `KB_SOURCES_PATH` set, then attach a separate daily EventBridge rule.
+- Run `cd agent && npm install` with network access before deployment packaging to validate/refresh the copied `@aws-sdk/client-bedrock-runtime` lockfile metadata. Sandbox npm attempts failed with `ENOTFOUND`/`ENOTCACHED`.
+- No live DB, Bedrock, S3, or network fetches were attempted from the sandbox.

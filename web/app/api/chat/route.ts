@@ -37,10 +37,14 @@ function formatMemorySources(sources: SearchChunkResult[]): string {
   if (sources.length === 0) return "No retrieved memory excerpts.";
 
   return sources
-    .map(
-      (source, index) =>
-        `[Memory ${index + 1} | similarity ${source.similarity.toFixed(3)}]\n${source.content}`
-    )
+    .map((source, index) => {
+      const sourceLabel =
+        source.source === "policy"
+          ? `policy${source.source_key ? `:${source.source_key}` : ""}`
+          : "user memory";
+      const title = source.source_title ? ` | ${source.source_title}` : "";
+      return `[Memory ${index + 1} | ${sourceLabel}${title} | similarity ${source.similarity.toFixed(3)}]\n${source.content}`;
+    })
     .join("\n\n");
 }
 

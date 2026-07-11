@@ -1,0 +1,26 @@
+[
+  {
+    "key": "uscis-h1b",
+    "title": "USCIS H-1B Specialty Occupations",
+    "topic": "h1b",
+    "url": "https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations"
+  },
+  {
+    "key": "quebec-caq-study",
+    "title": "Quebec Acceptance Certificate (CAQ) for studies",
+    "topic": "caq",
+    "url": "https://www.quebec.ca/en/education/study-quebec/temporary-selection-studies"
+  },
+  {
+    "key": "ircc-study-permit",
+    "title": "IRCC Study permit",
+    "topic": "study-permit",
+    "url": "https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada/study-permit.html"
+  },
+  {
+    "key": "ircc-pgwp",
+    "title": "IRCC Post-Graduation Work Permit",
+    "topic": "pgwp",
+    "url": "https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada/work/after-graduation/about.html"
+  }
+]

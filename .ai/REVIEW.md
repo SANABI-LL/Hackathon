@@ -57,6 +57,14 @@
 - 提醒 Lambda(agent/handler.ts 自包含 pg)：扫 30 天内 open deadline 建 remind 事件；重跑幂等(remindersCreated=0，同日同 deadline 不重复)。
 - seed：4 样本文档/8 deadline，幂等(text_hash 去重)。
 
+## Round 4 审查 + live 验证 (2026-07-10) ✅ — 政策知识库
+KB 每日刷新 + 全局 SYSTEM KB + chat 联合检索，审查通过（tsc/lint/21 测试；未碰队友文件；schema 加 source_key + partial index；searchChunks 改 user_id IN(user,SYSTEM)），live 全绿：
+- ALTER 加 source_key 列到 live 库成功。
+- refresh-kb 真抓 4 个官方 URL：USCIS H1B(63 chunks)、魁省 CAQ(45)、IRCC 学签(2)、IRCC PGWP(8) 全入 SYSTEM 政策库；单源失败隔离生效（初版 2 个坏 URL 未拖垮其它）。
+- 保持最新版：二次运行未变的源 status=skipped（hash 去重，不重复 embed）。
+- chat 问 PGWP 政策 → 召回官方政策 chunk(sim 0.835) 作答，用户记忆+政策库联合检索生效。
+- 修正了 2 个默认 URL（USCIS 去 -and-fashion-models 后缀；魁省改 /education/study-quebec/temporary-selection-studies）。
+
 ## 建议下一步顺序
 1. Codex 先修 ①③ 的 #1（去重）+ #2（大小上限）+ ④ 的 #4（纯函数单测）——这些不需要 infra，现在就能做。
 2. 你并行去开 CockroachDB 集群 + 申请/确认 Bedrock 权限 + 建 S3 桶，填 `.env.local`。

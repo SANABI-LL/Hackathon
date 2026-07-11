@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "seed": "tsx ../scripts/seed.ts"
+    "seed": "tsx ../scripts/seed.ts",
+    "refresh-kb": "tsx ../scripts/refresh-kb.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1085.0",
