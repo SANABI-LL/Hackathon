@@ -18,6 +18,10 @@ applications:
             - npm ci
         build:
           commands:
+            # Amplify console env vars exist only at build time; Next.js SSR
+            # reads .env.production at runtime, so persist them there
+            # (AWS-documented workaround for SSR runtime env vars).
+            - env | grep -e '^DATABASE_URL=' -e '^S3_BUCKET=' -e '^BEDROCK_CLAUDE_MODEL_ID=' -e '^BEDROCK_TITAN_MODEL_ID=' -e '^APP_USER_ID=' >> .env.production
             - npm run build
       artifacts:
         # Next.js SSR output. Amplify reads .next and provisions the compute.
