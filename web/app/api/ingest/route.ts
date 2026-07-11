@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createHash, randomUUID } from "crypto";
-import { PDFParse } from "pdf-parse";
 import {
   extractDeadlines,
   extractFromMedia,
@@ -60,6 +59,9 @@ function assertUploadSize(size: number): void {
 }
 
 async function extractPdfText(buffer: Buffer): Promise<string> {
+  // Lazy import: pdf-parse pulls in pdfjs-dist, which needs DOM polyfills
+  // (@napi-rs/canvas) at module init — must not run for text-only ingests.
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: buffer });
 
   try {
